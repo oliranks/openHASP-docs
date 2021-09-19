@@ -59,4 +59,159 @@ To add an openhasp plate to your installation with Jaffa Sunrise sample configur
 
 Restart the plate and the demo page should load automatically to your device.
 
+# More Example Rules
+```javascript
+/* BACKLIGHT DIM ON IDLE */
+rule "openHASP Display Backlight DIM on idle, return to Page 1 and Screensaver"
+    when
+        Item openHASP_Plate_Idle received update short
+    then
+        var idleday = '{"state":"on","brightness":10}'
+        var idlenight = '{"page":0,"id":99,"obj":"obj","x":0,"y":0,"w":240,"h":320,"radius":0,"hidden":0,"bg_grad_dir":0,"bg_color":"black"}'
+        var Number hour = now.getHour	
+            if ((hour >= 0)  || (hour <= 6)) {
+                openHASP_Plate_Page_Current.sendCommand("1")   
+                openHASP_Plate_Command_JSON.sendCommand("['backlight " + idleday +"']")
+            }
+            else    {
+                openHASP_Plate_Page_Current.sendCommand("1")       
+                openHASP_Plate_Command_JSON.sendCommand("['" + idlenight +"']")
+                openHASP_Plate_Command_JSON.sendCommand("['backlight off']")
+            }
+end
 
+rule "openHASP Display Backlight DIM off"
+    when
+        Item openHASP_Plate_Idle received update off
+    then
+        var idleoff = '{"state":"on","brightness":255}'
+        var Number hour = now.getHour
+            if ((hour >= 0)  || (hour <= 6)) {
+                openHASP_Plate_Command_JSON.sendCommand("['backlight " + idleoff +"']")
+            }
+            else    {
+                openHASP_Plate_Command_JSON.sendCommand("['p0b99.hidden=1','p0b99.delete=']")
+                openHASP_Plate_Command_JSON.sendCommand("['backlight " + idleoff +"']")
+            }
+end
+
+/* TEMPERATURE UPDATE */
+rule "openHASP Temperature Update"
+when
+    Item localCurrentTemperature received update or
+    Item openHASP_Plate_Page_Current received update 1 or
+    Item openHASP_Plate_LWT received update
+then
+    if (openHASP_Plate_Page_Current.state == 1)   //Only update page if you're on page 1 (avoid sending too many MQTT messages)
+    {
+        openHASP_Plate_Command_JSON.sendCommand("['p1b2.value_str=" + localCurrentTemperature.state.format("%.1f") + "']")
+    }
+end
+
+/* MOODLIGHT VIA COLORPICKER */
+rule "openHASP CHANNEL TRIGGERED"
+    when
+        Channel "mqtt:broker:openHASPBroker:openHASP_Plate_State_Event" triggered
+    then
+        logInfo("openHASP_channel.rules", " Channel triggered: {} ",  receivedEvent)
+
+        var topic = receivedEvent.toString.split("#").get(0)
+        var payload = receivedEvent.substring(topic.length+1,receivedEvent.length)
+        var topicvalue = topic.split("/").get(topic.split("/").size -1)
+        var jsonkey = transform("JS","json_demo_key.js",payload)
+        var jsonvalue = transform("JSONPATH", "$." + jsonkey, payload).toString.toUpperCase
+
+        logInfo("openHASP_channel.rules", " Topic: {} [{}] Payload: {}",  topic, topicvalue , payload)
+
+        switch (topicvalue)
+        {
+            case 'idle':
+            {
+                logInfo("openHASP_channel.rules", " Idle event: {}",  payload)
+            }
+            case 'statusupdate':
+            {
+                logInfo("openHASP_channel.rules", " Statusupdate: {}",  payload)
+            }
+            case 'dim':
+            {
+                logInfo("openHASP_channel.rules", " Dim: {}",  payload)
+            }
+            case 'page':
+            {
+                logInfo("openHASP_channel.rules", " Page: {}",  payload)
+                postUpdate(openHASP_Plate_Page_Current, payload)
+            }
+            case 'input':
+            {
+                logInfo("openHASP_channel.rules", " Input: {}",  payload)
+            }
+            case 'sensors':
+            {
+                logInfo("openHASP_channel.rules", " Sensors: {}",  payload)
+            }
+            case 'backlight':
+            {
+                logInfo("openHASP_channel.rules", " Backlight: {}",  payload)
+            }
+            case 'moodlight':
+            {
+                logInfo("openHASP_channel.rules", " Moodlight: {}",  payload)
+            }
+            default:
+            {
+                var eventpage = topicvalue.split("b").get(0).split("p").get(1)
+                var eventbutton = topicvalue.split("b").get(1)
+
+                logInfo("openHASP_channel.rules", " Page: {} Button: {} Key: {} Value: {}",  eventpage, eventbutton, jsonkey, jsonvalue)
+
+                switch(eventpage)
+                {
+                    case '1':
+                    {
+                        switch(eventbutton)
+                        {
+                            case '2':
+                            {
+                                if(jsonkey == "event" && jsonvalue == "UP")
+                                {
+                                    var String stat
+                                    if (switch1.state == null || switch1.state == OFF){
+                                        switch1.sendCommand(ON)
+                                        stat = "ON"
+                                    } else {
+                                        switch1.sendCommand(OFF)
+                                        stat = "OFF"
+                                    }
+                                    openHASP_Plate_Command_JSON.sendCommand("[''p1b2.value_str=" + stat + "']")
+                                }
+                            }
+                        }
+                    }
+/* MOODLIGHT VIA COLORPICKER */
+                    case '2':   // Colorpicker Page ID
+                        switch(eventbutton)
+                        {
+                            case '2':   // Colorpicker Button ID
+                            {
+                                if(jsonkey == "event" && jsonvalue == "UP")
+                                {
+                                    var colorpicker = receivedEvent.toString.split('"').get(7)
+                                    var moodlight = '{"state":"on","brightness":255,"color":"' + colorpicker + '"}'
+                                    openHASP_Plate_Command_JSON.sendCommand("['moodlight " + moodlight + "']")
+                                }
+                            }
+                            case '3':
+                            {
+                                if(jsonkey == "event" && jsonvalue == "UP")
+                                {
+                                    openHASP_Plate_Moodlight_OFF.sendCommand(ON)
+                                }
+                            }
+                        }
+                }
+                
+            }
+        }
+    end
+```
